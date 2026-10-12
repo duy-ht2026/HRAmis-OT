@@ -272,7 +272,7 @@
             const workbook = window.XLSX.utils.book_new();
             window.XLSX.utils.book_append_sheet(workbook, worksheet, 'OT_Misa');
 
-            window.XLSX.writeFile(workbook, `OT_KetQua_Misa_${fileName ? fileName.replace(/\.[^/.]+$/, '') : 'export'}.xlsx`);
+            window.XLSX.writeFile(workbook, `OTMisa_${fileName ? fileName.replace(/\.[^/.]+$/, '') : 'export'}.xlsx`);
           };
 
           return (
@@ -284,8 +284,8 @@
                       <i data-lucide="file-spreadsheet" className="w-7 h-7 text-emerald-400"></i>
                     </div>
                     <div>
-                      <h1 className="text-xl font-bold tracking-tight">Hệ Thống Chuyển Đổi OT Misa</h1>
-                      <p className="text-xs text-blue-200">Định dạng chuẩn Misa với cột Thứ và Số giờ đặt ở cuối bảng</p>
+                      <h1 className="text-xl font-bold tracking-tight">Ứng Dụng Chuyển Đổi OT-AMiS</h1>
+                      <p className="text-xs text-blue-200">Định dạng chuẩn theo AMIS</p>
                     </div>
                   </div>
                   
