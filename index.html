@@ -1,654 +1,673 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  FileSpreadsheet, Upload, Download, Settings, 
-  CheckCircle2, AlertTriangle, Calendar, Clock, User, 
-  HelpCircle, Eye, BarChart2
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trình xử lý bảng chấm công OT Misa</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX compilation in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- SheetJS for Excel processing -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col">
+    <div id="root" class="flex-1 flex flex-col"></div>
 
-export default function App() {
-  const [rawWorkbook, setRawWorkbook] = useState(null);
-  const [rawSheets, setRawSheets] = useState([]);
-  const [selectedSheet, setSelectedSheet] = useState('');
-  const [rawData, setRawData] = useState([]);
-  const [xlsxLoaded, setXlsxLoaded] = useState(false);
-  
-  // App settings with new fields requested
-  const [settings, setSettings] = useState({
-    startRow: 15,          // Dữ liệu bắt đầu từ dòng 15 (0-indexed: 14)
-    empIdCol: 1,           // Cột B: Mã nhân viên
-    empNameCol: 2,         // Cột C: Tên nhân viên
-    titleCol: 3,           // Cột D: Chức vụ (Ghi chú)
-    otStartCol: 4,         // Cột E là index 4
-    otEndCol: 34,          // Cột AI là index 34
-    periodStartDate: '2026-08-29', // Ngày bắt đầu kỳ chấm công
-    weekdayStartTime: '17:30',     // Thứ 2 - Thứ 7
-    sundayStartTime: '08:00',      // Chủ nhật
-    overtimeType: 'Sau ca',        // Thời điểm làm thêm
-    reason: 'Đảm bảo tiến độ công việc', // Lý do làm thêm
-    approver: '100120',            // Người duyệt
-    status: 'Đã duyệt'             // Trạng thái
-  });
+    <script type="text/babel">
+        const { useState, useEffect } = React;
 
-  // Processed results
-  const [processedRows, setProcessedRows] = useState([]);
-  const [employeeSummaries, setEmployeeSummaries] = useState({});
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState('preview'); // 'preview' | 'settings' | 'guide'
-  const [fileName, setFileName] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
-
-  useEffect(() => {
-    if (window.XLSX) {
-      setXlsxLoaded(true);
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
-    script.async = true;
-    script.onload = () => setXlsxLoaded(true);
-    script.onerror = () => setErrorMsg('Không thể tải thư viện xử lý Excel. Vui lòng kiểm tra lại kết nối mạng.');
-    document.body.appendChild(script);
-  }, []);
-
-  const handleFileUpload = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!window.XLSX) {
-      setErrorMsg('Thư viện Excel chưa sẵn sàng. Vui lòng đợi trong giây lát.');
-      return;
-    }
-    setFileName(file.name);
-    setErrorMsg('');
-    setLoading(true);
-
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target.result;
-        const wb = window.XLSX.read(bstr, { type: 'binary', cellDates: true });
-        setRawWorkbook(wb);
-        setRawSheets(wb.SheetNames);
-        if (wb.SheetNames.length > 0) {
-          setSelectedSheet(wb.SheetNames[0]);
-          parseSheet(wb, wb.SheetNames[0]);
-        }
-      } catch (err) {
-        setErrorMsg('Lỗi đọc file Excel: ' + err.message);
-        setLoading(false);
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
-
-  const handleSheetChange = (sheetName) => {
-    setSelectedSheet(sheetName);
-    if (rawWorkbook) {
-      parseSheet(rawWorkbook, sheetName);
-    }
-  };
-
-  const parseSheet = (wb, sheetName) => {
-    setLoading(true);
-    try {
-      const ws = wb.Sheets[sheetName];
-      const data = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      setRawData(data);
-      processOvertimeData(data);
-    } catch (err) {
-      setErrorMsg('Lỗi phân tích sheet: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const formatMisaDateTime = (dateObj, timeStr) => {
-    const [hoursStr, minutesStr] = timeStr.split(':');
-    let hours = parseInt(hoursStr, 10);
-    const minutes = parseInt(minutesStr, 10) || 0;
-    
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12;
-    hours = hours ? hours : 12; // the hour '0' should be '12'
-    
-    const pad = (n) => (n < 10 ? '0' + n : n);
-    
-    const d = pad(dateObj.getDate());
-    const m = pad(dateObj.getMonth() + 1);
-    const y = dateObj.getFullYear();
-    
-    const formattedTime = `${pad(hours)}:${pad(minutes)}:00 ${ampm}`;
-    const formattedDate = `${d}/${m}/${y}`;
-    
-    return `${formattedDate} ${formattedTime}`;
-  };
-
-  const processOvertimeData = (data) => {
-    if (!data || data.length === 0) return;
-
-    const startIdx = settings.startRow - 1; // 15 -> index 14
-    const results = [];
-    const summaries = {};
-    const baseDateObj = new Date(settings.periodStartDate);
-
-    for (let r = startIdx; r < data.length; r++) {
-      const row = data[r];
-      if (!row) continue;
-
-      const empId = row[settings.empIdCol] !== undefined ? String(row[settings.empIdCol]).trim() : '';
-      const empName = row[settings.empNameCol] !== undefined ? String(row[settings.empNameCol]).trim() : '';
-      const positionTitle = row[settings.titleCol] !== undefined ? String(row[settings.titleCol]).trim() : '';
-
-      if (!empId) continue;
-
-      if (!summaries[empId]) {
-        summaries[empId] = {
-          empId,
-          empName,
-          positionTitle,
-          weekdayHours: 0,
-          sundayHours: 0,
-          totalHours: 0
-        };
-      }
-
-      for (let c = settings.otStartCol; c <= settings.otEndCol; c++) {
-        const cellValue = row[c];
-        const otHours = parseFloat(cellValue);
-
-        if (!isNaN(otHours) && otHours > 0) {
-          const dayOffset = c - settings.otStartCol;
-          const currentDate = new Date(baseDateObj);
-          currentDate.setDate(baseDateObj.getDate() + dayOffset);
-
-          const dayOfWeek = currentDate.getDay(); // 0 = Chủ nhật, 1-6 = Thứ 2 - Thứ 7
-          let startTime = settings.weekdayStartTime;
-          if (dayOfWeek === 0) {
-            startTime = settings.sundayStartTime;
-            summaries[empId].sundayHours += otHours;
-          } else {
-            summaries[empId].weekdayHours += otHours;
-          }
-          summaries[empId].totalHours += otHours;
-
-          const startDateTimeStr = formatMisaDateTime(currentDate, startTime);
-          const endDateTimeObj = addHoursToDate(currentDate, startTime, otHours);
+        function App() {
+          const [rawWorkbook, setRawWorkbook] = useState(null);
+          const [rawSheets, setRawSheets] = useState([]);
+          const [selectedSheet, setSelectedSheet] = useState('');
+          const [rawData, setRawData] = useState([]);
+          const [xlsxLoaded, setXlsxLoaded] = useState(false);
           
-          const [endH, endM] = endDateTimeObj.time.split(':');
-          const endDateTimeStr = formatMisaDateTime(endDateTimeObj.date, `${endH}:${endM}`);
-
-          results.push({
-            empId,
-            empName,
-            positionTitle,
-            fromDateTime: startDateTimeStr,
-            toDateTime: endDateTimeStr,
-            overtimeType: settings.overtimeType,
-            reason: settings.reason,
-            approver: settings.approver,
-            status: settings.status,
-            dayOfWeek: getDayOfWeekName(dayOfWeek),
-            hours: otHours
+          const [settings, setSettings] = useState({
+            startRow: 15,
+            empIdCol: 1,
+            empNameCol: 2,
+            titleCol: 3,
+            otStartCol: 4,
+            otEndCol: 34,
+            periodStartDate: '2026-08-29',
+            weekdayStartTime: '17:30',
+            sundayStartTime: '08:00',
+            overtimeType: 'Sau ca',
+            reason: 'Đảm bảo tiến độ công việc',
+            approver: '100120',
+            status: 'Đã duyệt'
           });
-        }
-      }
-    }
 
-    setProcessedRows(results);
-    setEmployeeSummaries(summaries);
-  };
+          const [processedRows, setProcessedRows] = useState([]);
+          const [employeeSummaries, setEmployeeSummaries] = useState({});
+          const [loading, setLoading] = useState(false);
+          const [activeTab, setActiveTab] = useState('preview');
+          const [fileName, setFileName] = useState('');
+          const [errorMsg, setErrorMsg] = useState('');
 
-  const pad = (n) => (n < 10 ? '0' + n : n);
+          useEffect(() => {
+            if (window.XLSX) {
+              setXlsxLoaded(true);
+            } else {
+              setErrorMsg('Không thể tải thư viện xử lý Excel. Vui lòng kiểm tra lại kết nối mạng.');
+            }
+            if (window.lucide) {
+              window.lucide.createIcons();
+            }
+          }, []);
 
-  const getDayOfWeekName = (dayNum) => {
-    const days = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
-    return days[dayNum];
-  };
+          useEffect(() => {
+            if (window.lucide) {
+              window.lucide.createIcons();
+            }
+          }, [activeTab, processedRows, xlsxLoaded]);
 
-  const addHoursToDate = (baseDate, timeStr, hoursToAdd) => {
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const totalMinutes = hours * 60 + minutes + Math.round(hoursToAdd * 60);
-    
-    const extraDays = Math.floor(totalMinutes / (24 * 60));
-    const remainingMinutes = totalMinutes % (24 * 60);
-    
-    const newHours = Math.floor(remainingMinutes / 60);
-    const newMins = remainingMinutes % 60;
+          const handleFileUpload = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            if (!window.XLSX) {
+              setErrorMsg('Thư viện Excel chưa sẵn sàng.');
+              return;
+            }
+            setFileName(file.name);
+            setErrorMsg('');
+            setLoading(true);
 
-    const resultDate = new Date(baseDate);
-    resultDate.setDate(resultDate.getDate() + extraDays);
+            const reader = new FileReader();
+            reader.onload = (evt) => {
+              try {
+                const bstr = evt.target.result;
+                const wb = window.XLSX.read(bstr, { type: 'binary', cellDates: true });
+                setRawWorkbook(wb);
+                setRawSheets(wb.SheetNames);
+                if (wb.SheetNames.length > 0) {
+                  setSelectedSheet(wb.SheetNames[0]);
+                  parseSheet(wb, wb.SheetNames[0]);
+                }
+              } catch (err) {
+                setErrorMsg('Lỗi đọc file Excel: ' + err.message);
+                setLoading(false);
+              }
+            };
+            reader.readAsBinaryString(file);
+          };
 
-    return {
-      date: resultDate,
-      time: `${pad(newHours)}:${pad(newMins)}`
-    };
-  };
+          const handleSheetChange = (sheetName) => {
+            setSelectedSheet(sheetName);
+            if (rawWorkbook) {
+              parseSheet(rawWorkbook, sheetName);
+            }
+          };
 
-  useEffect(() => {
-    if (rawData.length > 0) {
-      processOvertimeData(rawData);
-    }
-  }, [settings]);
+          const parseSheet = (wb, sheetName) => {
+            setLoading(true);
+            try {
+              const ws = wb.Sheets[sheetName];
+              const data = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+              setRawData(data);
+              processOvertimeData(data);
+            } catch (err) {
+              setErrorMsg('Lỗi phân tích sheet: ' + err.message);
+            } finally {
+              setLoading(false);
+            }
+          };
 
-  const exportToExcel = () => {
-    if (processedRows.length === 0 || !window.XLSX) return;
+          const pad = (n) => (n < 10 ? '0' + n : n);
 
-    // Export with "Thứ" and "Số giờ" placed at the very end
-    const exportData = processedRows.map((item, index) => ({
-      'STT': index + 1,
-      'Mã nhân viên': item.empId,
-      'Tên nhân viên': item.empName,
-      'Làm thêm từ': item.fromDateTime,
-      'Làm thêm đến': item.toDateTime,
-      'Thời điểm làm thêm': item.overtimeType,
-      'Lý do làm thêm': item.reason,
-      'Người duyệt': item.approver,
-      'Ghi chú': item.positionTitle,
-      'Trạng thái': item.status,
-      'Thứ': item.dayOfWeek,
-      'Số giờ': item.hours
-    }));
-
-    const worksheet = window.XLSX.utils.json_to_sheet(exportData);
-    const workbook = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(workbook, worksheet, 'OT_Misa');
-
-    window.XLSX.writeFile(workbook, `OT_KetQua_Misa_${fileName ? fileName.replace(/\.[^/.]+$/, '') : 'export'}.xlsx`);
-  };
-
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      <header className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="bg-white/10 p-2.5 rounded-xl backdrop-blur-sm">
-              <FileSpreadsheet className="w-7 h-7 text-emerald-400" />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight">Hệ Thống Chuyển Đổi OT Misa</h1>
-              <p className="text-xs text-blue-200">Định dạng chuẩn Misa với cột Thứ và Số giờ đặt ở cuối bảng</p>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-2 bg-white/10 p-1.5 rounded-xl backdrop-blur-sm border border-white/10">
-            <button 
-              onClick={() => setActiveTab('preview')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'preview' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
-            >
-              <Eye className="w-4 h-4" /> Kết quả ({processedRows.length})
-            </button>
-            <button 
-              onClick={() => setActiveTab('summary')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'summary' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
-            >
-              <BarChart2 className="w-4 h-4" /> Tổng hợp NV
-            </button>
-            <button 
-              onClick={() => setActiveTab('settings')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
-            >
-              <Settings className="w-4 h-4" /> Cấu hình
-            </button>
-            <button 
-              onClick={() => setActiveTab('guide')}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'guide' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
-            >
-              <HelpCircle className="w-4 h-4" /> Hướng dẫn
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
-        {!xlsxLoaded && (
-          <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-            <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-            <span>Đang tải thư viện xử lý Excel...</span>
-          </div>
-        )}
-
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-          <div className="md:col-span-1 flex flex-col gap-2">
-            <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-              <Upload className="w-4 h-4 text-blue-600" /> Tải lên file Excel chấm công OT
-            </label>
-            <div className="relative border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-blue-500 transition-colors bg-slate-50/50 group cursor-pointer">
-              <input 
-                type="file" 
-                accept=".xlsx, .xls" 
-                onChange={handleFileUpload} 
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
-              <div className="flex flex-col items-center gap-1">
-                <FileSpreadsheet className="w-8 h-8 text-slate-400 group-hover:text-blue-600 transition-colors" />
-                <span className="text-xs font-medium text-slate-600">
-                  {fileName ? <strong className="text-blue-600">{fileName}</strong> : "Chọn file hoặc kéo thả vào đây"}
-                </span>
-                <span className="text-[10px] text-slate-400">Hỗ trợ .xlsx, .xls</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="md:col-span-2 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-            <div className="flex flex-col gap-1 w-full sm:w-auto">
-              <span className="text-xs font-medium text-slate-500">Chọn Sheet dữ liệu:</span>
-              <select 
-                value={selectedSheet} 
-                onChange={(e) => handleSheetChange(e.target.value)}
-                disabled={rawSheets.length === 0}
-                className="bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 min-w-[200px]"
-              >
-                {rawSheets.length === 0 ? (
-                  <option>Chưa có file dữ liệu</option>
-                ) : (
-                  rawSheets.map(s => <option key={s} value={s}>{s}</option>)
-                )}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
-              <div className="text-right hidden sm:block">
-                <div className="text-xs text-slate-500">Tổng số bản ghi OT:</div>
-                <div className="text-lg font-bold text-blue-600">{processedRows.length}</div>
-              </div>
-              <button 
-                onClick={exportToExcel}
-                disabled={processedRows.length === 0}
-                className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-medium text-sm flex items-center justify-center gap-2 shadow-sm transition-all ${processedRows.length > 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
-              >
-                <Download className="w-4 h-4" /> Tải Excel Misa
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {errorMsg && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-
-        {activeTab === 'preview' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-blue-600" />
-                <h2 className="font-semibold text-slate-800">Kết quả Misa (Cột Thứ và Số giờ đặt ở cuối bảng)</h2>
-              </div>
-              <span className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
-                {processedRows.length} dòng
-              </span>
-            </div>
-
-            <div className="overflow-x-auto min-h-[400px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100/70 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
-                    <th className="py-3 px-3">STT</th>
-                    <th className="py-3 px-3">Mã nhân viên</th>
-                    <th className="py-3 px-3">Tên nhân viên</th>
-                    <th className="py-3 px-3">Làm thêm từ</th>
-                    <th className="py-3 px-3">Làm thêm đến</th>
-                    <th className="py-3 px-3">Thời điểm làm thêm</th>
-                    <th className="py-3 px-3">Lý do làm thêm</th>
-                    <th className="py-3 px-3">Người duyệt</th>
-                    <th className="py-3 px-3">Ghi chú</th>
-                    <th className="py-3 px-3">Trạng thái</th>
-                    <th className="py-3 px-3 bg-violet-50 text-violet-800">Thứ</th>
-                    <th className="py-3 px-3 bg-cyan-50 text-cyan-900">Số giờ</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {processedRows.length === 0 ? (
-                    <tr>
-                      <td colSpan="12" className="text-center py-16 text-slate-400">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <FileSpreadsheet className="w-12 h-12 text-slate-300" />
-                          <p>Chưa có dữ liệu. Vui lòng tải lên file Excel chấm công OT.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    processedRows.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-2.5 px-3 text-slate-400 font-medium">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-semibold text-blue-600">{row.empId}</td>
-                        <td className="py-2.5 px-3 font-medium">{row.empName || '(Không có tên)'}</td>
-                        <td className="py-2.5 px-3"><span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-mono font-medium">{row.fromDateTime}</span></td>
-                        <td className="py-2.5 px-3"><span className="bg-indigo-50 text-indigo-800 px-2 py-0.5 rounded font-mono font-medium">{row.toDateTime}</span></td>
-                        <td className="py-2.5 px-3 text-slate-600">{row.overtimeType}</td>
-                        <td className="py-2.5 px-3 text-slate-600">{row.reason}</td>
-                        <td className="py-2.5 px-3 font-mono text-slate-600">{row.approver}</td>
-                        <td className="py-2.5 px-3 text-slate-500 italic">{row.positionTitle}</td>
-                        <td className="py-2.5 px-3"><span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-medium">{row.status}</span></td>
-                        <td className="py-2.5 px-3 bg-violet-50/50"><span className="text-violet-700 font-medium">{row.dayOfWeek}</span></td>
-                        <td className="py-2.5 px-3 bg-cyan-50/50"><span className="text-cyan-800 font-bold">{row.hours}h</span></td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'summary' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col">
-            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BarChart2 className="w-5 h-5 text-blue-600" />
-                <h2 className="font-semibold text-slate-800">Bảng Tổng Hợp Giờ OT Theo Nhân Viên (Ngày Thường & Chủ Nhật)</h2>
-              </div>
-              <span className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
-                {Object.keys(employeeSummaries).length} nhân viên
-              </span>
-            </div>
-
-            <div className="overflow-x-auto min-h-[400px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-100/70 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
-                    <th className="py-3 px-4">STT</th>
-                    <th className="py-3 px-4">Mã nhân viên</th>
-                    <th className="py-3 px-4">Tên nhân viên</th>
-                    <th className="py-3 px-4">Chức vụ / Ghi chú</th>
-                    <th className="py-3 px-4 text-right">Tổng giờ ngày thường (T2-T7)</th>
-                    <th className="py-3 px-4 text-right">Tổng giờ Chủ Nhật</th>
-                    <th className="py-3 px-4 text-right font-bold text-blue-600">Tổng cộng giờ OT</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {Object.keys(employeeSummaries).length === 0 ? (
-                    <tr>
-                      <td colSpan="7" className="text-center py-16 text-slate-400">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <BarChart2 className="w-12 h-12 text-slate-300" />
-                          <p>Chưa có dữ liệu tổng hợp. Vui lòng tải lên file Excel.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    Object.values(employeeSummaries).map((sum, idx) => (
-                      <tr key={sum.empId} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-3 px-4 text-slate-400 font-medium">{idx + 1}</td>
-                        <td className="py-3 px-4 font-semibold text-blue-600">{sum.empId}</td>
-                        <td className="py-3 px-4 font-medium">{sum.empName || '(Không có tên)'}</td>
-                        <td className="py-3 px-4 text-slate-500 italic">{sum.positionTitle}</td>
-                        <td className="py-3 px-4 text-right font-mono"><span className="bg-blue-50 text-blue-800 px-2 py-1 rounded font-semibold">{sum.weekdayHours.toFixed(1)}h</span></td>
-                        <td className="py-3 px-4 text-right font-mono"><span className="bg-amber-50 text-amber-800 px-2 py-1 rounded font-semibold">{sum.sundayHours.toFixed(1)}h</span></td>
-                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-600 text-sm">{sum.totalHours.toFixed(1)}h</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'settings' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 flex flex-col gap-6">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
-              <Settings className="w-5 h-5 text-blue-600" />
-              <div>
-                <h2 className="font-semibold text-slate-800">Cấu hình tham số đọc file & thiết lập mặc định</h2>
-                <p className="text-xs text-slate-500">Tùy chỉnh thông số kỳ lương, giờ bắt đầu OT, thời điểm, lý do, người duyệt...</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Dòng bắt đầu dữ liệu (Start Row):</label>
-                <input 
-                  type="number" 
-                  value={settings.startRow}
-                  onChange={(e) => setSettings({...settings, startRow: parseInt(e.target.value) || 1})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Cột Mã nhân viên (Index):</label>
-                <input 
-                  type="number" 
-                  value={settings.empIdCol}
-                  onChange={(e) => setSettings({...settings, empIdCol: parseInt(e.target.value) || 0})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Cột Tên nhân viên (Index):</label>
-                <input 
-                  type="number" 
-                  value={settings.empNameCol}
-                  onChange={(e) => setSettings({...settings, empNameCol: parseInt(e.target.value) || 0})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Cột Chức vụ / Ghi chú (Index):</label>
-                <input 
-                  type="number" 
-                  value={settings.titleCol}
-                  onChange={(e) => setSettings({...settings, titleCol: parseInt(e.target.value) || 0})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Cột bắt đầu ngày OT (Cột E):</label>
-                <input 
-                  type="number" 
-                  value={settings.otStartCol}
-                  onChange={(e) => setSettings({...settings, otStartCol: parseInt(e.target.value) || 0})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Cột kết thúc ngày OT (Cột AI):</label>
-                <input 
-                  type="number" 
-                  value={settings.otEndCol}
-                  onChange={(e) => setSettings({...settings, otEndCol: parseInt(e.target.value) || 0})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Ngày bắt đầu kỳ chấm công:</label>
-                <input 
-                  type="date" 
-                  value={settings.periodStartDate}
-                  onChange={(e) => setSettings({...settings, periodStartDate: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Giờ bắt đầu OT (Thứ 2 - Thứ 7):</label>
-                <input 
-                  type="time" 
-                  value={settings.weekdayStartTime}
-                  onChange={(e) => setSettings({...settings, weekdayStartTime: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Giờ bắt đầu OT (Chủ Nhật):</label>
-                <input 
-                  type="time" 
-                  value={settings.sundayStartTime}
-                  onChange={(e) => setSettings({...settings, sundayStartTime: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Thời điểm làm thêm:</label>
-                <input 
-                  type="text" 
-                  value={settings.overtimeType}
-                  onChange={(e) => setSettings({...settings, overtimeType: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Lý do làm thêm:</label>
-                <input 
-                  type="text" 
-                  value={settings.reason}
-                  onChange={(e) => setSettings({...settings, reason: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Người duyệt:</label>
-                <input 
-                  type="text" 
-                  value={settings.approver}
-                  onChange={(e) => setSettings({...settings, approver: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-slate-700">Trạng thái:</label>
-                <input 
-                  type="text" 
-                  value={settings.status}
-                  onChange={(e) => setSettings({...settings, status: e.target.value})}
-                  className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'guide' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 flex flex-col gap-4 text-sm text-slate-700 leading-relaxed">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-              <HelpCircle className="w-5 h-5 text-blue-600" />
-              <h2 className="font-semibold text-slate-800">Hướng dẫn định dạng kết quả</h2>
-            </div>
+          const formatMisaDateTime = (dateObj, timeStr) => {
+            const [hoursStr, minutesStr] = timeStr.split(':');
+            let hours = parseInt(hoursStr, 10);
+            const minutes = parseInt(minutesStr, 10) || 0;
             
-            <div className="space-y-3">
-              <p><strong>1. Cấu trúc bảng Misa chính:</strong> Các cột <em>Mã NV, Tên NV, Làm thêm từ, Đến, Thời điểm, Lý do, Người duyệt, Ghi chú, Trạng thái</em> được giữ nguyên thứ tự chuẩn Misa. Hai cột phụ trợ <strong>"Thứ"</strong> và <strong>"Số giờ"</strong> được đặt ở cuối bảng giúp đối soát dễ dàng.</p>
-              <p><strong>2. Tab "Tổng hợp NV":</strong> Cung cấp cái nhìn tổng quan về tổng giờ OT trong kỳ phân tách rõ giữa <strong>Ngày thường (Thứ 2 - Thứ 7)</strong> và <strong>Chủ Nhật</strong> cho từng nhân viên, không làm ảnh hưởng đến cấu trúc file Excel Misa xuất ra.</p>
-              <p><strong>3. Định dạng thời gian:</strong> Theo chuẩn <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-blue-600">DD/MM/YYYY hh:mm:ss AM/PM</code>.</p>
-            </div>
-          </div>
-        )}
-      </main>
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            hours = hours ? hours : 12;
+            
+            const d = pad(dateObj.getDate());
+            const m = pad(dateObj.getMonth() + 1);
+            const y = dateObj.getFullYear();
+            
+            const formattedTime = `${pad(hours)}:${pad(minutes)}:00 ${ampm}`;
+            const formattedDate = `${d}/${m}/${y}`;
+            
+            return `${formattedDate} ${formattedTime}`;
+          };
 
-      <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 mt-auto">
-        Ứng dụng chuyển đổi bảng chấm công OT Misa &bull; Đồng bộ Giao diện & Excel
-      </footer>
-    </div>
-  );
-}
+          const getDayOfWeekName = (dayNum) => {
+            const days = ['Chủ Nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+            return days[dayNum];
+          };
+
+          const addHoursToDate = (baseDate, timeStr, hoursToAdd) => {
+            const [hours, minutes] = timeStr.split(':').map(Number);
+            const totalMinutes = hours * 60 + minutes + Math.round(hoursToAdd * 60);
+            
+            const extraDays = Math.floor(totalMinutes / (24 * 60));
+            const remainingMinutes = totalMinutes % (24 * 60);
+            
+            const newHours = Math.floor(remainingMinutes / 60);
+            const newMins = remainingMinutes % 60;
+
+            const resultDate = new Date(baseDate);
+            resultDate.setDate(resultDate.getDate() + extraDays);
+
+            return {
+              date: resultDate,
+              time: `${pad(newHours)}:${pad(newMins)}`
+            };
+          };
+
+          const processOvertimeData = (data) => {
+            if (!data || data.length === 0) return;
+
+            const startIdx = settings.startRow - 1;
+            const results = [];
+            const summaries = {};
+            const baseDateObj = new Date(settings.periodStartDate);
+
+            for (let r = startIdx; r < data.length; r++) {
+              const row = data[r];
+              if (!row) continue;
+
+              const empId = row[settings.empIdCol] !== undefined ? String(row[settings.empIdCol]).trim() : '';
+              const empName = row[settings.empNameCol] !== undefined ? String(row[settings.empNameCol]).trim() : '';
+              const positionTitle = row[settings.titleCol] !== undefined ? String(row[settings.titleCol]).trim() : '';
+
+              if (!empId) continue;
+
+              if (!summaries[empId]) {
+                summaries[empId] = {
+                  empId,
+                  empName,
+                  positionTitle,
+                  weekdayHours: 0,
+                  sundayHours: 0,
+                  totalHours: 0
+                };
+              }
+
+              for (let c = settings.otStartCol; c <= settings.otEndCol; c++) {
+                const cellValue = row[c];
+                const otHours = parseFloat(cellValue);
+
+                if (!isNaN(otHours) && otHours > 0) {
+                  const dayOffset = c - settings.otStartCol;
+                  const currentDate = new Date(baseDateObj);
+                  currentDate.setDate(baseDateObj.getDate() + dayOffset);
+
+                  const dayOfWeek = currentDate.getDay();
+                  let startTime = settings.weekdayStartTime;
+                  if (dayOfWeek === 0) {
+                    startTime = settings.sundayStartTime;
+                    summaries[empId].sundayHours += otHours;
+                  } else {
+                    summaries[empId].weekdayHours += otHours;
+                  }
+                  summaries[empId].totalHours += otHours;
+
+                  const startDateTimeStr = formatMisaDateTime(currentDate, startTime);
+                  const endDateTimeObj = addHoursToDate(currentDate, startTime, otHours);
+                  
+                  const [endH, endM] = endDateTimeObj.time.split(':');
+                  const endDateTimeStr = formatMisaDateTime(endDateTimeObj.date, `${endH}:${endM}`);
+
+                  results.push({
+                    empId,
+                    empName,
+                    positionTitle,
+                    fromDateTime: startDateTimeStr,
+                    toDateTime: endDateTimeStr,
+                    overtimeType: settings.overtimeType,
+                    reason: settings.reason,
+                    approver: settings.approver,
+                    status: settings.status,
+                    dayOfWeek: getDayOfWeekName(dayOfWeek),
+                    hours: otHours
+                  });
+                }
+              }
+            }
+
+            setProcessedRows(results);
+            setEmployeeSummaries(summaries);
+          };
+
+          useEffect(() => {
+            if (rawData.length > 0) {
+              processOvertimeData(rawData);
+            }
+          }, [settings]);
+
+          const exportToExcel = () => {
+            if (processedRows.length === 0 || !window.XLSX) return;
+
+            const exportData = processedRows.map((item, index) => ({
+              'STT': index + 1,
+              'Mã nhân viên': item.empId,
+              'Tên nhân viên': item.empName,
+              'Làm thêm từ': item.fromDateTime,
+              'Làm thêm đến': item.toDateTime,
+              'Thời điểm làm thêm': item.overtimeType,
+              'Lý do làm thêm': item.reason,
+              'Người duyệt': item.approver,
+              'Ghi chú': item.positionTitle,
+              'Trạng thái': item.status,
+              'Thứ': item.dayOfWeek,
+              'Số giờ': item.hours
+            }));
+
+            const worksheet = window.XLSX.utils.json_to_sheet(exportData);
+            const workbook = window.XLSX.utils.book_new();
+            window.XLSX.utils.book_append_sheet(workbook, worksheet, 'OT_Misa');
+
+            window.XLSX.writeFile(workbook, `OT_KetQua_Misa_${fileName ? fileName.replace(/\.[^/.]+$/, '') : 'export'}.xlsx`);
+          };
+
+          return (
+            <div className="flex flex-col min-h-screen">
+              <header className="bg-gradient-to-r from-blue-700 to-indigo-800 text-white shadow-md">
+                <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white/10 p-2.5 rounded-xl backdrop-blur-sm">
+                      <i data-lucide="file-spreadsheet" className="w-7 h-7 text-emerald-400"></i>
+                    </div>
+                    <div>
+                      <h1 className="text-xl font-bold tracking-tight">Hệ Thống Chuyển Đổi OT Misa</h1>
+                      <p className="text-xs text-blue-200">Định dạng chuẩn Misa với cột Thứ và Số giờ đặt ở cuối bảng</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 bg-white/10 p-1.5 rounded-xl backdrop-blur-sm border border-white/10">
+                    <button 
+                      onClick={() => setActiveTab('preview')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'preview' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
+                    >
+                      <i data-lucide="eye" className="w-4 h-4"></i> Kết quả ({processedRows.length})
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('summary')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'summary' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
+                    >
+                      <i data-lucide="bar-chart-2" className="w-4 h-4"></i> Tổng hợp NV
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('settings')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
+                    >
+                      <i data-lucide="settings" className="w-4 h-4"></i> Cấu hình
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('guide')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${activeTab === 'guide' ? 'bg-white text-blue-900 shadow-sm' : 'text-white hover:bg-white/10'}`}
+                    >
+                      <i data-lucide="help-circle" className="w-4 h-4"></i> Hướng dẫn
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 flex flex-col gap-6">
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                  <div className="md:col-span-1 flex flex-col gap-2">
+                    <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <i data-lucide="upload" className="w-4 h-4 text-blue-600"></i> Tải lên file Excel chấm công OT
+                    </label>
+                    <div className="relative border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:border-blue-500 transition-colors bg-slate-50/50 group cursor-pointer">
+                      <input 
+                        type="file" 
+                        accept=".xlsx, .xls" 
+                        onChange={handleFileUpload} 
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      />
+                      <div className="flex flex-col items-center gap-1">
+                        <i data-lucide="file-spreadsheet" className="w-8 h-8 text-slate-400 group-hover:text-blue-600 transition-colors"></i>
+                        <span className="text-xs font-medium text-slate-600">
+                          {fileName ? <strong className="text-blue-600">{fileName}</strong> : "Chọn file hoặc kéo thả vào đây"}
+                        </span>
+                        <span className="text-[10px] text-slate-400">Hỗ trợ .xlsx, .xls</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div className="flex flex-col gap-1 w-full sm:w-auto">
+                      <span className="text-xs font-medium text-slate-500">Chọn Sheet dữ liệu:</span>
+                      <select 
+                        value={selectedSheet} 
+                        onChange={(e) => handleSheetChange(e.target.value)}
+                        disabled={rawSheets.length === 0}
+                        className="bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 min-w-[200px]"
+                      >
+                        {rawSheets.length === 0 ? (
+                          <option>Chưa có file dữ liệu</option>
+                        ) : (
+                          rawSheets.map(s => <option key={s} value={s}>{s}</option>)
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                      <div className="text-right hidden sm:block">
+                        <div className="text-xs text-slate-500">Tổng số bản ghi OT:</div>
+                        <div className="text-lg font-bold text-blue-600">{processedRows.length}</div>
+                      </div>
+                      <button 
+                        onClick={exportToExcel}
+                        disabled={processedRows.length === 0}
+                        className={`w-full sm:w-auto px-5 py-2.5 rounded-xl font-medium text-sm flex items-center justify-center gap-2 shadow-sm transition-all ${processedRows.length > 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}
+                      >
+                        <i data-lucide="download" className="w-4 h-4"></i> Tải Excel Misa
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {errorMsg && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center gap-3">
+                    <i data-lucide="alert-triangle" className="w-5 h-5 text-red-500 shrink-0"></i>
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
+
+                {activeTab === 'preview' && (
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <i data-lucide="file-spreadsheet" className="w-5 h-5 text-blue-600"></i>
+                        <h2 className="font-semibold text-slate-800">Kết quả Misa (Cột Thứ và Số giờ đặt ở cuối bảng)</h2>
+                      </div>
+                      <span className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
+                        {processedRows.length} dòng
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto min-h-[400px]">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/70 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
+                            <th className="py-3 px-3">STT</th>
+                            <th className="py-3 px-3">Mã nhân viên</th>
+                            <th className="py-3 px-3">Tên nhân viên</th>
+                            <th className="py-3 px-3">Làm thêm từ</th>
+                            <th className="py-3 px-3">Làm thêm đến</th>
+                            <th className="py-3 px-3">Thời điểm làm thêm</th>
+                            <th className="py-3 px-3">Lý do làm thêm</th>
+                            <th className="py-3 px-3">Người duyệt</th>
+                            <th className="py-3 px-3">Ghi chú</th>
+                            <th className="py-3 px-3">Trạng thái</th>
+                            <th className="py-3 px-3 bg-violet-50 text-violet-800">Thứ</th>
+                            <th className="py-3 px-3 bg-cyan-50 text-cyan-900">Số giờ</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-700">
+                          {processedRows.length === 0 ? (
+                            <tr>
+                              <td colSpan="12" className="text-center py-16 text-slate-400">
+                                <div className="flex flex-col items-center justify-center gap-2">
+                                  <i data-lucide="file-spreadsheet" className="w-12 h-12 text-slate-300"></i>
+                                  <p>Chưa có dữ liệu. Vui lòng tải lên file Excel chấm công OT.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : (
+                            processedRows.map((row, idx) => (
+                              <tr key={idx} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-2.5 px-3 text-slate-400 font-medium">{idx + 1}</td>
+                                <td className="py-2.5 px-3 font-semibold text-blue-600">{row.empId}</td>
+                                <td className="py-2.5 px-3 font-medium">{row.empName || '(Không có tên)'}</td>
+                                <td className="py-2.5 px-3"><span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-mono font-medium">{row.fromDateTime}</span></td>
+                                <td className="py-2.5 px-3"><span className="bg-indigo-50 text-indigo-800 px-2 py-0.5 rounded font-mono font-medium">{row.toDateTime}</span></td>
+                                <td className="py-2.5 px-3 text-slate-600">{row.overtimeType}</td>
+                                <td className="py-2.5 px-3 text-slate-600">{row.reason}</td>
+                                <td className="py-2.5 px-3 font-mono text-slate-600">{row.approver}</td>
+                                <td className="py-2.5 px-3 text-slate-500 italic">{row.positionTitle}</td>
+                                <td className="py-2.5 px-3"><span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-medium">{row.status}</span></td>
+                                <td className="py-2.5 px-3 bg-violet-50/50"><span className="text-violet-700 font-medium">{row.dayOfWeek}</span></td>
+                                <td className="py-2.5 px-3 bg-cyan-50/50"><span className="text-cyan-800 font-bold">{row.hours}h</span></td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'summary' && (
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 overflow-hidden flex flex-col">
+                    <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <i data-lucide="bar-chart-2" className="w-5 h-5 text-blue-600"></i>
+                        <h2 className="font-semibold text-slate-800">Bảng Tổng Hợp Giờ OT Theo Nhân Viên (Ngày Thường & Chủ Nhật)</h2>
+                      </div>
+                      <span className="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
+                        {Object.keys(employeeSummaries).length} nhân viên
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto min-h-[400px]">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-slate-100/70 text-slate-600 font-semibold uppercase tracking-wider border-b border-slate-200">
+                            <th className="py-3 px-4">STT</th>
+                            <th className="py-3 px-4">Mã nhân viên</th>
+                            <th className="py-3 px-4">Tên nhân viên</th>
+                            <th className="py-3 px-4">Chức vụ / Ghi chú</th>
+                            <th className="py-3 px-4 text-right">Tổng giờ ngày thường (T2-T7)</th>
+                            <th className="py-3 px-4 text-right">Tổng giờ Chủ Nhật</th>
+                            <th className="py-3 px-4 text-right font-bold text-blue-600">Tổng cộng giờ OT</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-slate-700">
+                          {Object.keys(employeeSummaries).length === 0 ? (
+                            <tr>
+                              <td colSpan="7" className="text-center py-16 text-slate-400">
+                                <div className="flex flex-col items-center justify-center gap-2">
+                                  <i data-lucide="bar-chart-2" className="w-12 h-12 text-slate-300"></i>
+                                  <p>Chưa có dữ liệu tổng hợp. Vui lòng tải lên file Excel.</p>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : (
+                            Object.values(employeeSummaries).map((sum, idx) => (
+                              <tr key={sum.empId} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-3 px-4 text-slate-400 font-medium">{idx + 1}</td>
+                                <td className="py-3 px-4 font-semibold text-blue-600">{sum.empId}</td>
+                                <td className="py-3 px-4 font-medium">{sum.empName || '(Không có tên)'}</td>
+                                <td className="py-3 px-4 text-slate-500 italic">{sum.positionTitle}</td>
+                                <td className="py-3 px-4 text-right font-mono"><span className="bg-blue-50 text-blue-800 px-2 py-1 rounded font-semibold">{sum.weekdayHours.toFixed(1)}h</span></td>
+                                <td className="py-3 px-4 text-right font-mono"><span className="bg-amber-50 text-amber-800 px-2 py-1 rounded font-semibold">{sum.sundayHours.toFixed(1)}h</span></td>
+                                <td className="py-3 px-4 text-right font-mono font-bold text-emerald-600 text-sm">{sum.totalHours.toFixed(1)}h</td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'settings' && (
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 flex flex-col gap-6">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4">
+                      <i data-lucide="settings" className="w-5 h-5 text-blue-600"></i>
+                      <div>
+                        <h2 className="font-semibold text-slate-800">Cấu hình tham số đọc file & thiết lập mặc định</h2>
+                        <p className="text-xs text-slate-500">Tùy chỉnh thông số kỳ lương, giờ bắt đầu OT, thời điểm, lý do, người duyệt...</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Dòng bắt đầu dữ liệu (Start Row):</label>
+                        <input 
+                          type="number" 
+                          value={settings.startRow}
+                          onChange={(e) => setSettings({...settings, startRow: parseInt(e.target.value) || 1})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Cột Mã nhân viên (Index):</label>
+                        <input 
+                          type="number" 
+                          value={settings.empIdCol}
+                          onChange={(e) => setSettings({...settings, empIdCol: parseInt(e.target.value) || 0})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Cột Tên nhân viên (Index):</label>
+                        <input 
+                          type="number" 
+                          value={settings.empNameCol}
+                          onChange={(e) => setSettings({...settings, empNameCol: parseInt(e.target.value) || 0})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Cột Chức vụ / Ghi chú (Index):</label>
+                        <input 
+                          type="number" 
+                          value={settings.titleCol}
+                          onChange={(e) => setSettings({...settings, titleCol: parseInt(e.target.value) || 0})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Cột bắt đầu ngày OT (Cột E):</label>
+                        <input 
+                          type="number" 
+                          value={settings.otStartCol}
+                          onChange={(e) => setSettings({...settings, otStartCol: parseInt(e.target.value) || 0})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Cột kết thúc ngày OT (Cột AI):</label>
+                        <input 
+                          type="number" 
+                          value={settings.otEndCol}
+                          onChange={(e) => setSettings({...settings, otEndCol: parseInt(e.target.value) || 0})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Ngày bắt đầu kỳ chấm công:</label>
+                        <input 
+                          type="date" 
+                          value={settings.periodStartDate}
+                          onChange={(e) => setSettings({...settings, periodStartDate: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Giờ bắt đầu OT (Thứ 2 - Thứ 7):</label>
+                        <input 
+                          type="time" 
+                          value={settings.weekdayStartTime}
+                          onChange={(e) => setSettings({...settings, weekdayStartTime: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Giờ bắt đầu OT (Chủ Nhật):</label>
+                        <input 
+                          type="time" 
+                          value={settings.sundayStartTime}
+                          onChange={(e) => setSettings({...settings, sundayStartTime: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Thời điểm làm thêm:</label>
+                        <input 
+                          type="text" 
+                          value={settings.overtimeType}
+                          onChange={(e) => setSettings({...settings, overtimeType: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Lý do làm thêm:</label>
+                        <input 
+                          type="text" 
+                          value={settings.reason}
+                          onChange={(e) => setSettings({...settings, reason: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Người duyệt:</label>
+                        <input 
+                          type="text" 
+                          value={settings.approver}
+                          onChange={(e) => setSettings({...settings, approver: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-700">Trạng thái:</label>
+                        <input 
+                          type="text" 
+                          value={settings.status}
+                          onChange={(e) => setSettings({...settings, status: e.target.value})}
+                          className="bg-slate-50 border border-slate-300 rounded-lg p-2.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'guide' && (
+                  <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-6 flex flex-col gap-4 text-sm text-slate-700 leading-relaxed">
+                    <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                      <i data-lucide="help-circle" className="w-5 h-5 text-blue-600"></i>
+                      <h2 className="font-semibold text-slate-800">Hướng dẫn định dạng kết quả</h2>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <p><strong>1. Cấu trúc bảng Misa chính:</strong> Các cột <em>Mã NV, Tên NV, Làm thêm từ, Đến, Thời điểm, Lý do, Người duyệt, Ghi chú, Trạng thái</em> được giữ nguyên thứ tự chuẩn Misa. Hai cột phụ trợ <strong>"Thứ"</strong> và <strong>"Số giờ"</strong> được đặt ở cuối bảng giúp đối soát dễ dàng.</p>
+                      <p><strong>2. Tab "Tổng hợp NV":</strong> Cung cấp cái nhìn tổng quan về tổng giờ OT trong kỳ phân tách rõ giữa <strong>Ngày thường (Thứ 2 - Thứ 7)</strong> và <strong>Chủ Nhật</strong> cho từng nhân viên, không làm ảnh hưởng đến cấu trúc file Excel Misa xuất ra.</p>
+                      <p><strong>3. Định dạng thời gian:</strong> Theo chuẩn <code className="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-blue-600">DD/MM/YYYY hh:mm:ss AM/PM</code>.</p>
+                    </div>
+                  </div>
+                )}
+              </main>
+
+              <footer className="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-400 mt-auto">
+                Ứng dụng chuyển đổi bảng chấm công OT Misa &bull; Đồng bộ Giao diện & Excel
+              </footer>
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
